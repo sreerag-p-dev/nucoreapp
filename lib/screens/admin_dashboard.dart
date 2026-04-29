@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import '../models/user_model.dart';
+import '../services/api_service.dart';
+import '../services/auth_service.dart';
+import 'login_screen.dart';
 
 class AdminConsoleScreen extends StatefulWidget {
   const AdminConsoleScreen({super.key});
@@ -8,58 +12,18 @@ class AdminConsoleScreen extends StatefulWidget {
 }
 
 class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
-  int _selectedTab = 1; // 0=Dashboard, 1=Users, 2=Reports, 3=Settings
+  int _selectedTab = 1;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
-  final List<_UserModel> _users = [
-    _UserModel(
-      initials: 'JD',
-      name: 'Jane Doe',
-      email: 'jane.doe@corporate.com',
-      role: 'ADMINISTRATOR',
-      roleColor: const Color(0xFF4F5BD5),
-      roleBg: const Color(0xFFEEF0FC),
-      avatarBg: const Color(0xFFD6D9F5),
-      avatarTextColor: const Color(0xFF4F5BD5),
-      isActive: true,
-    ),
-    _UserModel(
-      initials: 'MS',
-      name: 'Michael Smith',
-      email: 'm.smith@operations.net',
-      role: 'STANDARD USER',
-      roleColor: const Color(0xFF3D4FBF),
-      roleBg: const Color(0xFFEEF0FC),
-      avatarBg: const Color(0xFF8A93D5),
-      avatarTextColor: Colors.white,
-      isActive: true,
-    ),
-    _UserModel(
-      initials: 'RW',
-      name: 'Rachel Wong',
-      email: 'r.wong@finance.io',
-      role: 'BILLING LEAD',
-      roleColor: const Color(0xFFD97706),
-      roleBg: const Color(0xFFFEF3C7),
-      avatarBg: const Color(0xFFFDBA74),
-      avatarTextColor: const Color(0xFF92400E),
-      isActive: true,
-    ),
-    _UserModel(
-      initials: 'AK',
-      name: 'Alex Kapranos',
-      email: 'a.kapranos@dev.team',
-      role: 'DEACTIVATED',
-      roleColor: const Color(0xFF9CA3AF),
-      roleBg: const Color(0xFFF3F4F6),
-      avatarBg: const Color(0xFFE5E7EB),
-      avatarTextColor: const Color(0xFF9CA3AF),
-      isActive: false,
-    ),
-  ];
+  // API state
+  List<UserModel> _users = [];
+  bool _isLoading = true;
+  String? _loadError;
+  String _token = '';
+  AuthUser? _currentUser;
 
-  List<_UserModel> get _filteredUsers {
+  List<UserModel> get _filteredUsers {
     if (_searchQuery.isEmpty) return _users;
     final q = _searchQuery.toLowerCase();
     return _users
@@ -73,30 +37,85 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
   }
 
   @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _initAndLoad();
   }
+
+  Future<void> _initAndLoad() async {
+    final token = await AuthService.getToken();
+    final user = await AuthService.getCurrentUser();
+    if (token == null) {
+      _logout();
+      return;
+    }
+    setState(() {
+      _token = token;
+      _currentUser = user;
+    });
+    await _loadUsers();
+  }
+
+  Future<void> _loadUsers() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+    try {
+      final users = await ApiService.getUsers(_token);
+      setState(() {
+        _users = users;
+        _isLoading = false;
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _loadError = e.message;
+        _isLoading = false;
+      });
+    } catch (_) {
+      setState(() {
+        _loadError = 'Failed to load users. Check your connection.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _logout() async {
+    await AuthService.logout();
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
+  }
+
+  // ── Create User ───────────────────────────────────────────────────────────
 
   void _showCreateUserDialog(BuildContext context) {
     final nameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
-    String selectedRole = 'STANDARD USER';
+    final passwordCtrl = TextEditingController();
+    String selectedRole = 'user';
+    bool isCreating = false;
+    String? dialogError;
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text(
-          'Create New User',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF1A1F3C),
-            fontSize: 18,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
           ),
-        ),
-        content: StatefulBuilder(
-          builder: (context, setDState) => Column(
+          title: const Text(
+            'Create New User',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF1A1F3C),
+              fontSize: 18,
+            ),
+          ),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -111,6 +130,13 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                 hint: 'Email Address',
                 icon: Icons.email_outlined,
                 keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              _DialogField(
+                controller: passwordCtrl,
+                hint: 'Password',
+                icon: Icons.lock_outline,
+                obscureText: true,
               ),
               const SizedBox(height: 12),
               const Text(
@@ -133,12 +159,12 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                   child: DropdownButton<String>(
                     value: selectedRole,
                     isExpanded: true,
-                    items: ['ADMINISTRATOR', 'STANDARD USER', 'BILLING LEAD']
+                    items: ['admin', 'user']
                         .map(
                           (r) => DropdownMenuItem(
                             value: r,
                             child: Text(
-                              r,
+                              r == 'admin' ? 'Administrator' : 'Standard User',
                               style: const TextStyle(
                                 fontSize: 14,
                                 color: Color(0xFF1A1F3C),
@@ -151,12 +177,236 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                   ),
                 ),
               ),
+              if (dialogError != null) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFFCA5A5)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        color: Color(0xFFEF4444),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          dialogError!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFFB91C1C),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
+          actions: [
+            TextButton(
+              onPressed: isCreating ? null : () => Navigator.pop(ctx),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Color(0xFF8A93B2)),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4F5BD5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: isCreating
+                  ? null
+                  : () async {
+                      setDState(() {
+                        isCreating = true;
+                        dialogError = null;
+                      });
+                      try {
+                        final newUser = await ApiService.createUser(
+                          token: _token,
+                          name: nameCtrl.text.trim(),
+                          email: emailCtrl.text.trim(),
+                          password: passwordCtrl.text,
+                          role: selectedRole,
+                        );
+                        setState(() => _users.add(newUser));
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _showSnack(
+                          'User "${newUser.name}" created successfully.',
+                        );
+                      } on ApiException catch (e) {
+                        setDState(() {
+                          dialogError = e.message;
+                          isCreating = false;
+                        });
+                      } catch (_) {
+                        setDState(() {
+                          dialogError = 'Unexpected error. Try again.';
+                          isCreating = false;
+                        });
+                      }
+                    },
+              child: isCreating
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Text(
+                      'Create',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Reset Password ────────────────────────────────────────────────────────
+
+  void _showResetPasswordDialog(UserModel user) {
+    final passwordCtrl = TextEditingController();
+    bool isResetting = false;
+    String? dialogError;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: Text(
+            'Reset Password',
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF1A1F3C),
+              fontSize: 18,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Set a new password for ${user.name}',
+                style: const TextStyle(color: Color(0xFF8A93B2), fontSize: 13),
+              ),
+              const SizedBox(height: 14),
+              _DialogField(
+                controller: passwordCtrl,
+                hint: 'New Password (min 6 chars)',
+                icon: Icons.lock_outline,
+                obscureText: true,
+              ),
+              if (dialogError != null) ...[
+                const SizedBox(height: 10),
+                _DialogError(message: dialogError!),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isResetting ? null : () => Navigator.pop(ctx),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Color(0xFF8A93B2)),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4F5BD5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: isResetting
+                  ? null
+                  : () async {
+                      setDState(() {
+                        isResetting = true;
+                        dialogError = null;
+                      });
+                      try {
+                        await ApiService.resetPassword(
+                          token: _token,
+                          userId: user.id,
+                          newPassword: passwordCtrl.text,
+                        );
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _showSnack('Password reset for ${user.name}.');
+                      } on ApiException catch (e) {
+                        setDState(() {
+                          dialogError = e.message;
+                          isResetting = false;
+                        });
+                      } catch (_) {
+                        setDState(() {
+                          dialogError = 'Unexpected error. Try again.';
+                          isResetting = false;
+                        });
+                      }
+                    },
+              child: isResetting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Text(
+                      'Reset',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Toggle Disable ────────────────────────────────────────────────────────
+
+  Future<void> _toggleDisable(UserModel user) async {
+    final action = user.disabled ? 're-enable' : 'disable';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          '${action[0].toUpperCase()}${action.substring(1)} User?',
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+        ),
+        content: Text(
+          'Are you sure you want to $action "${user.name}"?',
+          style: const TextStyle(color: Color(0xFF8A93B2)),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text(
               'Cancel',
               style: TextStyle(color: Color(0xFF8A93B2)),
@@ -164,14 +414,83 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4F5BD5),
+              backgroundColor: user.disabled
+                  ? const Color(0xFF16A34A)
+                  : const Color(0xFFD97706),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
               ),
             ),
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              user.disabled ? 'Re-enable' : 'Disable',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final updated = await ApiService.toggleDisableUser(
+        token: _token,
+        userId: user.id,
+      );
+      setState(() {
+        final idx = _users.indexWhere((u) => u.id == updated.id);
+        if (idx != -1) _users[idx] = updated;
+      });
+      _showSnack(
+        updated.disabled
+            ? '${updated.name} has been disabled.'
+            : '${updated.name} has been re-enabled.',
+      );
+    } on ApiException catch (e) {
+      _showSnack(e.message, isError: true);
+    }
+  }
+
+  // ── Delete User ───────────────────────────────────────────────────────────
+
+  Future<void> _deleteUser(UserModel user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Delete User?',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 17,
+            color: Color(0xFFB91C1C),
+          ),
+        ),
+        content: Text(
+          'This will permanently delete "${user.name}". This action cannot be undone.',
+          style: const TextStyle(color: Color(0xFF8A93B2)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text(
-              'Create',
+              'Cancel',
+              style: TextStyle(color: Color(0xFF8A93B2)),
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Delete',
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w700,
@@ -181,6 +500,35 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
         ],
       ),
     );
+    if (confirmed != true) return;
+
+    try {
+      await ApiService.deleteUser(token: _token, userId: user.id);
+      setState(() => _users.removeWhere((u) => u.id == user.id));
+      _showSnack('${user.name} has been deleted.');
+    } on ApiException catch (e) {
+      _showSnack(e.message, isError: true);
+    }
+  }
+
+  void _showSnack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError
+            ? const Color(0xFFEF4444)
+            : const Color(0xFF3A4DC9),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -217,59 +565,39 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
     );
   }
 
-  // ── Mobile Layout ────────────────────────────────────────────────────────
   Widget _buildMobileLayout(BuildContext context, bool isTablet) {
     return Column(
       children: [
-        _AppBar(isTablet: isTablet),
+        _AppBar(
+          isTablet: isTablet,
+          userName: _currentUser?.name,
+          onLogout: _logout,
+        ),
         Expanded(
-          child: ListView(
+          child: _buildBody(
+            isTablet,
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-            children: [
-              _StatCard(isTablet: isTablet),
-              const SizedBox(height: 16),
-              _SearchBar(
-                controller: _searchController,
-                onChanged: (v) => setState(() => _searchQuery = v),
-              ),
-              const SizedBox(height: 20),
-              _SectionHeader(isTablet: isTablet),
-              const SizedBox(height: 12),
-              ..._filteredUsers.map(
-                (u) => _UserCard(user: u, isTablet: isTablet),
-              ),
-            ],
           ),
         ),
       ],
     );
   }
 
-  // ── Tablet Layout ────────────────────────────────────────────────────────
   Widget _buildTabletLayout(BuildContext context, bool isTablet) {
     return Column(
       children: [
-        _AppBar(isTablet: isTablet),
+        _AppBar(
+          isTablet: isTablet,
+          userName: _currentUser?.name,
+          onLogout: _logout,
+        ),
         Expanded(
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 720),
-              child: ListView(
+              child: _buildBody(
+                isTablet,
                 padding: const EdgeInsets.fromLTRB(24, 20, 24, 120),
-                children: [
-                  _StatCard(isTablet: isTablet),
-                  const SizedBox(height: 20),
-                  _SearchBar(
-                    controller: _searchController,
-                    onChanged: (v) => setState(() => _searchQuery = v),
-                  ),
-                  const SizedBox(height: 24),
-                  _SectionHeader(isTablet: isTablet),
-                  const SizedBox(height: 14),
-                  ..._filteredUsers.map(
-                    (u) => _UserCard(user: u, isTablet: isTablet),
-                  ),
-                ],
               ),
             ),
           ),
@@ -277,12 +605,105 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
       ],
     );
   }
+
+  Widget _buildBody(bool isTablet, {required EdgeInsets padding}) {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4F5BD5)),
+        ),
+      );
+    }
+
+    if (_loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.wifi_off_rounded,
+                color: Color(0xFF8A93B2),
+                size: 48,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _loadError!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xFF8A93B2), fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: _loadUsers,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4F5BD5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                label: const Text(
+                  'Retry',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView(
+      padding: padding,
+      children: [
+        _StatCard(isTablet: isTablet, totalUsers: _users.length),
+        SizedBox(height: isTablet ? 20 : 16),
+        _SearchBar(
+          controller: _searchController,
+          onChanged: (v) => setState(() => _searchQuery = v),
+        ),
+        SizedBox(height: isTablet ? 24 : 20),
+        _SectionHeader(isTablet: isTablet, count: _filteredUsers.length),
+        SizedBox(height: isTablet ? 14 : 12),
+        ..._filteredUsers.map(
+          (u) => _UserCard(
+            user: u,
+            isTablet: isTablet,
+            onResetPassword: () => _showResetPasswordDialog(u),
+            onToggleDisable: () => _toggleDisable(u),
+            onDelete: () => _deleteUser(u),
+          ),
+        ),
+        if (_filteredUsers.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            child: Center(
+              child: Text(
+                _searchQuery.isEmpty
+                    ? 'No users found.'
+                    : 'No results for "$_searchQuery".',
+                style: const TextStyle(color: Color(0xFF8A93B2), fontSize: 14),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 // ── App Bar ───────────────────────────────────────────────────────────────────
+
 class _AppBar extends StatelessWidget {
   final bool isTablet;
-  const _AppBar({required this.isTablet});
+  final String? userName;
+  final VoidCallback onLogout;
+
+  const _AppBar({
+    required this.isTablet,
+    required this.onLogout,
+    this.userName,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -310,6 +731,37 @@ class _AppBar extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          // Logout button
+          GestureDetector(
+            onTap: onLogout,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEF0FC),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.logout_rounded,
+                    color: Color(0xFF4F5BD5),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Logout',
+                    style: TextStyle(
+                      fontSize: isTablet ? 13 : 12,
+                      color: const Color(0xFF4F5BD5),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
           Container(
             width: isTablet ? 48 : 40,
             height: isTablet ? 48 : 40,
@@ -322,7 +774,7 @@ class _AppBar extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF4F5BD5).withValues(alpha: (0.3)),
+                  color: const Color(0xFF4F5BD5).withOpacity(0.3),
                   blurRadius: 8,
                   offset: const Offset(0, 3),
                 ),
@@ -341,9 +793,12 @@ class _AppBar extends StatelessWidget {
 }
 
 // ── Stat Card ─────────────────────────────────────────────────────────────────
+
 class _StatCard extends StatelessWidget {
   final bool isTablet;
-  const _StatCard({required this.isTablet});
+  final int totalUsers;
+
+  const _StatCard({required this.isTablet, required this.totalUsers});
 
   @override
   Widget build(BuildContext context) {
@@ -354,7 +809,7 @@ class _StatCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(isTablet ? 20 : 16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF4F5BD5).withValues(alpha: (0.07)),
+            color: const Color(0xFF4F5BD5).withOpacity(0.07),
             blurRadius: 20,
             offset: const Offset(0, 6),
           ),
@@ -377,53 +832,18 @@ class _StatCard extends StatelessWidget {
                   ),
                 ),
                 SizedBox(height: isTablet ? 12 : 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Text(
-                      '1,284',
-                      style: TextStyle(
-                        fontSize: isTablet ? 42 : 36,
-                        fontWeight: FontWeight.w800,
-                        color: const Color(0xFF1A1F3C),
-                        letterSpacing: -1,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFDCFCE7),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.trending_up_rounded,
-                            color: Color(0xFF16A34A),
-                            size: 14,
-                          ),
-                          const SizedBox(width: 3),
-                          Text(
-                            '12%',
-                            style: TextStyle(
-                              fontSize: isTablet ? 13 : 12,
-                              fontWeight: FontWeight.w700,
-                              color: const Color(0xFF16A34A),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                Text(
+                  totalUsers.toString(),
+                  style: TextStyle(
+                    fontSize: isTablet ? 42 : 36,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF1A1F3C),
+                    letterSpacing: -1,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'v.s. previous 30 days',
+                  'Registered accounts',
                   style: TextStyle(
                     fontSize: isTablet ? 13.5 : 12,
                     color: const Color(0xFF8A93B2),
@@ -444,6 +864,7 @@ class _StatCard extends StatelessWidget {
 }
 
 // ── Search Bar ────────────────────────────────────────────────────────────────
+
 class _SearchBar extends StatelessWidget {
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
@@ -458,7 +879,7 @@ class _SearchBar extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: (0.05)),
+            color: Colors.black.withOpacity(0.05),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -468,19 +889,16 @@ class _SearchBar extends StatelessWidget {
         controller: controller,
         onChanged: onChanged,
         style: const TextStyle(fontSize: 14.5, color: Color(0xFF1A1F3C)),
-        decoration: InputDecoration(
+        decoration: const InputDecoration(
           hintText: 'Search by name, email, or role...',
-          hintStyle: const TextStyle(color: Color(0xFFB0B7CC), fontSize: 14.5),
-          prefixIcon: const Icon(
+          hintStyle: TextStyle(color: Color(0xFFB0B7CC), fontSize: 14.5),
+          prefixIcon: Icon(
             Icons.search_rounded,
             color: Color(0xFF8A93B2),
             size: 22,
           ),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 14,
-          ),
+          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         ),
       ),
     );
@@ -488,9 +906,12 @@ class _SearchBar extends StatelessWidget {
 }
 
 // ── Section Header ────────────────────────────────────────────────────────────
+
 class _SectionHeader extends StatelessWidget {
   final bool isTablet;
-  const _SectionHeader({required this.isTablet});
+  final int count;
+
+  const _SectionHeader({required this.isTablet, required this.count});
 
   @override
   Widget build(BuildContext context) {
@@ -498,19 +919,23 @@ class _SectionHeader extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
-          'Active Users',
+          'All Users',
           style: TextStyle(
             fontSize: isTablet ? 22 : 18,
             fontWeight: FontWeight.w800,
             color: const Color(0xFF1A1F3C),
           ),
         ),
-        GestureDetector(
-          onTap: () {},
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEEF0FC),
+            borderRadius: BorderRadius.circular(20),
+          ),
           child: Text(
-            'View All',
+            '$count found',
             style: TextStyle(
-              fontSize: isTablet ? 15 : 14,
+              fontSize: isTablet ? 13 : 12,
               fontWeight: FontWeight.w600,
               color: const Color(0xFF4F5BD5),
             ),
@@ -522,11 +947,38 @@ class _SectionHeader extends StatelessWidget {
 }
 
 // ── User Card ─────────────────────────────────────────────────────────────────
-class _UserCard extends StatelessWidget {
-  final _UserModel user;
-  final bool isTablet;
 
-  const _UserCard({required this.user, required this.isTablet});
+class _UserCard extends StatelessWidget {
+  final UserModel user;
+  final bool isTablet;
+  final VoidCallback onResetPassword;
+  final VoidCallback onToggleDisable;
+  final VoidCallback onDelete;
+
+  const _UserCard({
+    required this.user,
+    required this.isTablet,
+    required this.onResetPassword,
+    required this.onToggleDisable,
+    required this.onDelete,
+  });
+
+  Color get _roleColor =>
+      user.role == 'admin' ? const Color(0xFF4F5BD5) : const Color(0xFF3D4FBF);
+  Color get _roleBg =>
+      user.role == 'admin' ? const Color(0xFFEEF0FC) : const Color(0xFFEEF0FC);
+  Color get _avatarBg =>
+      user.disabled ? const Color(0xFFE5E7EB) : const Color(0xFFD6D9F5);
+  Color get _avatarTextColor =>
+      user.disabled ? const Color(0xFF9CA3AF) : const Color(0xFF4F5BD5);
+
+  String get _initials {
+    final parts = user.name.trim().split(' ');
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return user.name.substring(0, user.name.length.clamp(0, 2)).toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -541,9 +993,12 @@ class _UserCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(isTablet ? 18 : 14),
+        border: user.disabled
+            ? Border.all(color: const Color(0xFFE5E7EB), width: 1)
+            : null,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: (0.04)),
+            color: Colors.black.withOpacity(0.04),
             blurRadius: 12,
             offset: const Offset(0, 3),
           ),
@@ -555,17 +1010,14 @@ class _UserCard extends StatelessWidget {
           Container(
             width: avatarSize,
             height: avatarSize,
-            decoration: BoxDecoration(
-              color: user.avatarBg,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: _avatarBg, shape: BoxShape.circle),
             alignment: Alignment.center,
             child: Text(
-              user.initials,
+              _initials,
               style: TextStyle(
                 fontSize: isTablet ? 18 : 15,
                 fontWeight: FontWeight.w800,
-                color: user.avatarTextColor,
+                color: _avatarTextColor,
               ),
             ),
           ),
@@ -582,9 +1034,9 @@ class _UserCard extends StatelessWidget {
                   style: TextStyle(
                     fontSize: nameFontSize,
                     fontWeight: FontWeight.w700,
-                    color: user.isActive
-                        ? const Color(0xFF1A1F3C)
-                        : const Color(0xFF9CA3AF),
+                    color: user.disabled
+                        ? const Color(0xFF9CA3AF)
+                        : const Color(0xFF1A1F3C),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -598,24 +1050,50 @@ class _UserCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: user.roleBg,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    user.role,
-                    style: TextStyle(
-                      fontSize: roleFontSize,
-                      fontWeight: FontWeight.w700,
-                      color: user.roleColor,
-                      letterSpacing: 0.5,
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _roleBg,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        user.role.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: roleFontSize,
+                          fontWeight: FontWeight.w700,
+                          color: _roleColor,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (user.disabled) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'DISABLED',
+                          style: TextStyle(
+                            fontSize: roleFontSize,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF9CA3AF),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -630,15 +1108,29 @@ class _UserCard extends StatelessWidget {
               _IconAction(
                 icon: Icons.vpn_key_rounded,
                 color: const Color(0xFF8A93B2),
-                onTap: () {},
+                onTap: onResetPassword,
                 isTablet: isTablet,
+                tooltip: 'Reset Password',
               ),
-              SizedBox(width: isTablet ? 10 : 6),
+              SizedBox(width: isTablet ? 8 : 6),
+              _IconAction(
+                icon: user.disabled
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.block_rounded,
+                color: user.disabled
+                    ? const Color(0xFF16A34A)
+                    : const Color(0xFFD97706),
+                onTap: onToggleDisable,
+                isTablet: isTablet,
+                tooltip: user.disabled ? 'Re-enable' : 'Disable',
+              ),
+              SizedBox(width: isTablet ? 8 : 6),
               _IconAction(
                 icon: Icons.delete_rounded,
                 color: const Color(0xFFEF4444),
-                onTap: () {},
+                onTap: onDelete,
                 isTablet: isTablet,
+                tooltip: 'Delete',
               ),
             ],
           ),
@@ -653,33 +1145,39 @@ class _IconAction extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
   final bool isTablet;
+  final String tooltip;
 
   const _IconAction({
     required this.icon,
     required this.color,
     required this.onTap,
     required this.isTablet,
+    required this.tooltip,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: isTablet ? 38 : 32,
-        height: isTablet ? 38 : 32,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: (0.08)),
-          borderRadius: BorderRadius.circular(isTablet ? 10 : 8),
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: isTablet ? 38 : 32,
+          height: isTablet ? 38 : 32,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(isTablet ? 10 : 8),
+          ),
+          alignment: Alignment.center,
+          child: Icon(icon, color: color, size: isTablet ? 20 : 17),
         ),
-        alignment: Alignment.center,
-        child: Icon(icon, color: color, size: isTablet ? 20 : 17),
       ),
     );
   }
 }
 
 // ── Bottom Nav ────────────────────────────────────────────────────────────────
+
 class _BottomNav extends StatelessWidget {
   final int selected;
   final ValueChanged<int> onTap;
@@ -701,7 +1199,7 @@ class _BottomNav extends StatelessWidget {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: (0.07)),
+            color: Colors.black.withOpacity(0.07),
             blurRadius: 16,
             offset: const Offset(0, -4),
           ),
@@ -769,18 +1267,21 @@ class _BottomNav extends StatelessWidget {
   }
 }
 
-// ── Dialog Field ──────────────────────────────────────────────────────────────
+// ── Dialog Helpers ────────────────────────────────────────────────────────────
+
 class _DialogField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final IconData icon;
   final TextInputType keyboardType;
+  final bool obscureText;
 
   const _DialogField({
     required this.controller,
     required this.hint,
     required this.icon,
     this.keyboardType = TextInputType.text,
+    this.obscureText = false,
   });
 
   @override
@@ -794,6 +1295,7 @@ class _DialogField extends StatelessWidget {
       child: TextField(
         controller: controller,
         keyboardType: keyboardType,
+        obscureText: obscureText,
         style: const TextStyle(fontSize: 14, color: Color(0xFF1A1F3C)),
         decoration: InputDecoration(
           hintText: hint,
@@ -810,29 +1312,37 @@ class _DialogField extends StatelessWidget {
   }
 }
 
-// ── Models ────────────────────────────────────────────────────────────────────
-class _UserModel {
-  final String initials;
-  final String name;
-  final String email;
-  final String role;
-  final Color roleColor;
-  final Color roleBg;
-  final Color avatarBg;
-  final Color avatarTextColor;
-  final bool isActive;
+class _DialogError extends StatelessWidget {
+  final String message;
+  const _DialogError({required this.message});
 
-  const _UserModel({
-    required this.initials,
-    required this.name,
-    required this.email,
-    required this.role,
-    required this.roleColor,
-    required this.roleBg,
-    required this.avatarBg,
-    required this.avatarTextColor,
-    required this.isActive,
-  });
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFFCA5A5)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            color: Color(0xFFEF4444),
+            size: 16,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 12, color: Color(0xFFB91C1C)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _NavItem {

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:nucoreapp/screens/admin_dashboard.dart';
+import '../services/auth_service.dart';
+import '../services/api_service.dart';
+import 'admin_dashboard.dart';
+import 'user_dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,6 +15,9 @@ class _LoginScreenState extends State<LoginScreen>
     with SingleTickerProviderStateMixin {
   int _selectedRole = 0; // 0 = Admin, 1 = User
   bool _obscurePassword = true;
+  bool _isLoading = false;
+  String? _errorMessage;
+
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -45,12 +51,78 @@ class _LoginScreenState extends State<LoginScreen>
     super.dispose();
   }
 
+  // ── Login Logic ───────────────────────────────────────────────────────────
+
+  Future<void> _handleLogin() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _errorMessage = 'Please enter your email and password.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final user = await AuthService.login(email: email, password: password);
+
+      // RBAC: validate selected role tab matches actual role from server
+      final expectedRole = _selectedRole == 0 ? 'admin' : 'user';
+      if (user.role != expectedRole) {
+        await AuthService.logout(); // clear saved token
+        setState(() {
+          _errorMessage =
+              'This account is a "${user.role}" account. Please select the correct role tab.';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      if (!mounted) return;
+
+      // Navigate based on role
+      final destination = user.role == 'admin'
+          ? const AdminConsoleScreen()
+          : const UserDashboardScreen();
+
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 400),
+          pageBuilder: (_, __, ___) => destination,
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOut,
+              ),
+              child: child,
+            );
+          },
+        ),
+      );
+    } on ApiException catch (e) {
+      setState(() {
+        _errorMessage = e.message;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Unable to connect. Check your network and try again.';
+        _isLoading = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final isTablet = size.shortestSide >= 600;
 
-    // Responsive values
     final iconSize = isTablet ? 88.0 : 72.0;
     final iconInnerSize = isTablet ? 44.0 : 36.0;
     final iconRadius = isTablet ? 26.0 : 20.0;
@@ -63,7 +135,6 @@ class _LoginScreenState extends State<LoginScreen>
       backgroundColor: const Color(0xFFF0F2F8),
       body: SafeArea(
         child: Center(
-          // Centers card on tablet, full width on mobile
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
             child: SingleChildScrollView(
@@ -108,7 +179,6 @@ class _LoginScreenState extends State<LoginScreen>
 
                       SizedBox(height: isTablet ? 28 : 20),
 
-                      // Title
                       Text(
                         'Analytics Dashboard',
                         style: TextStyle(
@@ -122,7 +192,6 @@ class _LoginScreenState extends State<LoginScreen>
 
                       SizedBox(height: isTablet ? 10 : 6),
 
-                      // Subtitle
                       Text(
                         'Precision insights for high-stakes decisions',
                         style: TextStyle(
@@ -160,17 +229,17 @@ class _LoginScreenState extends State<LoginScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Role toggle
                             _RoleToggle(
                               selected: _selectedRole,
-                              onChanged: (val) =>
-                                  setState(() => _selectedRole = val),
+                              onChanged: (val) => setState(() {
+                                _selectedRole = val;
+                                _errorMessage = null;
+                              }),
                               isTablet: isTablet,
                             ),
 
                             SizedBox(height: isTablet ? 32 : 28),
 
-                            // Email label
                             _FieldLabel('Email Address', isTablet: isTablet),
                             SizedBox(height: isTablet ? 10 : 8),
                             _InputField(
@@ -179,11 +248,11 @@ class _LoginScreenState extends State<LoginScreen>
                               prefixIcon: Icons.email_outlined,
                               keyboardType: TextInputType.emailAddress,
                               isTablet: isTablet,
+                              enabled: !_isLoading,
                             ),
 
                             SizedBox(height: isTablet ? 24 : 20),
 
-                            // Password label row
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
@@ -214,38 +283,27 @@ class _LoginScreenState extends State<LoginScreen>
                                 () => _obscurePassword = !_obscurePassword,
                               ),
                               isTablet: isTablet,
+                              enabled: !_isLoading,
                             ),
+
+                            // Error message
+                            if (_errorMessage != null) ...[
+                              SizedBox(height: isTablet ? 16 : 12),
+                              _ErrorBanner(
+                                message: _errorMessage!,
+                                isTablet: isTablet,
+                              ),
+                            ],
 
                             SizedBox(height: isTablet ? 32 : 28),
 
-                            // Login button
                             _LoginButton(
                               label: _selectedRole == 0
                                   ? 'Log In as Admin'
                                   : 'Log In as User',
                               isTablet: isTablet,
-                              onTap: () {
-                                Navigator.pushReplacement(
-                                  context,
-                                  PageRouteBuilder(
-                                    transitionDuration: const Duration(
-                                      milliseconds: 400,
-                                    ),
-                                    pageBuilder: (_, __, ___) =>
-                                        const AdminConsoleScreen(),
-                                    transitionsBuilder:
-                                        (_, animation, __, child) {
-                                          return FadeTransition(
-                                            opacity: CurvedAnimation(
-                                              parent: animation,
-                                              curve: Curves.easeOut,
-                                            ),
-                                            child: child,
-                                          );
-                                        },
-                                  ),
-                                );
-                              },
+                              isLoading: _isLoading,
+                              onTap: _isLoading ? null : _handleLogin,
                             ),
                           ],
                         ),
@@ -259,6 +317,50 @@ class _LoginScreenState extends State<LoginScreen>
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ── Error Banner ──────────────────────────────────────────────────────────────
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  final bool isTablet;
+
+  const _ErrorBanner({required this.message, required this.isTablet});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: isTablet ? 16 : 12,
+        vertical: isTablet ? 12 : 10,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(isTablet ? 12 : 10),
+        border: Border.all(color: const Color(0xFFFCA5A5), width: 1),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            color: Color(0xFFEF4444),
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: isTablet ? 13.5 : 12.5,
+                color: const Color(0xFFB91C1C),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -388,6 +490,7 @@ class _InputField extends StatelessWidget {
   final VoidCallback? onSuffixTap;
   final TextInputType keyboardType;
   final bool isTablet;
+  final bool enabled;
 
   const _InputField({
     required this.controller,
@@ -398,6 +501,7 @@ class _InputField extends StatelessWidget {
     this.suffixIcon,
     this.onSuffixTap,
     this.keyboardType = TextInputType.text,
+    this.enabled = true,
   });
 
   @override
@@ -408,7 +512,7 @@ class _InputField extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F8FC),
+        color: enabled ? const Color(0xFFF7F8FC) : const Color(0xFFF0F1F5),
         borderRadius: BorderRadius.circular(isTablet ? 14 : 12),
         border: Border.all(color: const Color(0xFFE4E7F0), width: 1),
       ),
@@ -416,6 +520,7 @@ class _InputField extends StatelessWidget {
         controller: controller,
         obscureText: obscureText,
         keyboardType: keyboardType,
+        enabled: enabled,
         style: TextStyle(
           fontSize: fontSize,
           color: const Color(0xFF1A1F3C),
@@ -458,13 +563,15 @@ class _InputField extends StatelessWidget {
 
 class _LoginButton extends StatefulWidget {
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool isTablet;
+  final bool isLoading;
 
   const _LoginButton({
     required this.label,
     required this.onTap,
     required this.isTablet,
+    this.isLoading = false,
   });
 
   @override
@@ -499,11 +606,15 @@ class _LoginButtonState extends State<_LoginButton>
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => _pressController.forward(),
-      onTapUp: (_) {
-        _pressController.reverse();
-        widget.onTap();
-      },
+      onTapDown: widget.onTap != null
+          ? (_) => _pressController.forward()
+          : null,
+      onTapUp: widget.onTap != null
+          ? (_) {
+              _pressController.reverse();
+              widget.onTap!();
+            }
+          : null,
       onTapCancel: () => _pressController.reverse(),
       child: ScaleTransition(
         scale: _scaleAnim,
@@ -511,10 +622,12 @@ class _LoginButtonState extends State<_LoginButton>
           width: double.infinity,
           height: widget.isTablet ? 60 : 52,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF5B6EE8), Color(0xFF3A4DC9)],
+              colors: widget.isLoading
+                  ? [const Color(0xFF8E9DD6), const Color(0xFF7A89C4)]
+                  : [const Color(0xFF5B6EE8), const Color(0xFF3A4DC9)],
             ),
             borderRadius: BorderRadius.circular(widget.isTablet ? 16 : 14),
             boxShadow: [
@@ -526,15 +639,24 @@ class _LoginButtonState extends State<_LoginButton>
             ],
           ),
           alignment: Alignment.center,
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              fontSize: widget.isTablet ? 17 : 15.5,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-              letterSpacing: 0.2,
-            ),
-          ),
+          child: widget.isLoading
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : Text(
+                  widget.label,
+                  style: TextStyle(
+                    fontSize: widget.isTablet ? 17 : 15.5,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    letterSpacing: 0.2,
+                  ),
+                ),
         ),
       ),
     );
