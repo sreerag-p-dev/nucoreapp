@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nucoreapp/models/user_model.dart';
+import 'package:nucoreapp/screens/states_screen.dart';
 import '../models/dashboard_models.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
@@ -25,16 +26,6 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
 
   bool _isLoading = true;
   String? _loadError;
-
-  // Drill-down state
-  CountrySales? _selectedCountry;
-  List<StateSales> _states = [];
-  bool _loadingStates = false;
-
-  StateSales? _selectedState;
-  CitiesPage? _citiesPage;
-  bool _loadingCities = false;
-  int _currentCityPage = 1;
 
   Timer? _hourlyGrowthTimer;
 
@@ -81,7 +72,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
         _countries = results[2] as List<CountrySales>;
         _isLoading = false;
       });
-      _startHourlyGrowthPolling(); // start polling after dashboard loads
+      _startHourlyGrowthPolling();
     } on ApiException catch (e) {
       setState(() {
         _loadError = e.message;
@@ -96,7 +87,7 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
   }
 
   void _startHourlyGrowthPolling() {
-    _hourlyGrowthTimer?.cancel(); // cancel any existing timer
+    _hourlyGrowthTimer?.cancel();
     _fetchHourlyGrowthAndScheduleNext();
   }
 
@@ -106,62 +97,11 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
       final data = await ApiService.getHourlyGrowth(_token);
       if (!mounted) return;
       setState(() => _hourlyGrowth = data);
-      // Only schedule next call after SUCCESS — 3s starts here
       _hourlyGrowthTimer = Timer(
         const Duration(seconds: 3),
         _fetchHourlyGrowthAndScheduleNext,
       );
-    } catch (_) {
-      // On failure, do NOT schedule next call — polling stops silently
-      // Optionally retry after a longer delay if you want:
-      // _hourlyGrowthTimer = Timer(const Duration(seconds: 10), _fetchHourlyGrowthAndScheduleNext);
-    }
-  }
-
-  Future<void> _loadStates(CountrySales country) async {
-    setState(() {
-      _selectedCountry = country;
-      _selectedState = null;
-      _citiesPage = null;
-      _states = [];
-      _loadingStates = true;
-    });
-    try {
-      final states = await ApiService.getStates(
-        token: _token,
-        country: country.country,
-      );
-      setState(() {
-        _states = states;
-        _loadingStates = false;
-      });
-    } on ApiException catch (e) {
-      setState(() => _loadingStates = false);
-      _showSnack(e.message, isError: true);
-    }
-  }
-
-  Future<void> _loadCities(StateSales state, {int page = 1}) async {
-    setState(() {
-      _selectedState = state;
-      _currentCityPage = page;
-      _loadingCities = true;
-    });
-    try {
-      final cities = await ApiService.getCities(
-        token: _token,
-        state: state.state,
-        page: page,
-        limit: 10,
-      );
-      setState(() {
-        _citiesPage = cities;
-        _loadingCities = false;
-      });
-    } on ApiException catch (e) {
-      setState(() => _loadingCities = false);
-      _showSnack(e.message, isError: true);
-    }
+    } catch (_) {}
   }
 
   void _logout() async {
@@ -294,98 +234,16 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
                 country: c,
                 maxSales: _countries.first.sales,
                 isTablet: isTablet,
-                isSelected: _selectedCountry?.code == c.code,
-                onTap: () => _loadStates(c),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => StatesScreen(token: _token, country: c),
+                    ),
+                  );
+                },
               ),
             ),
-
-            // ── States drill-down ─────────────────────────────────────────
-            if (_selectedCountry != null) ...[
-              SizedBox(height: isTablet ? 20 : 16),
-              _SectionTitle(
-                'States — ${_selectedCountry!.country}',
-                isTablet: isTablet,
-                onBack: () => setState(() {
-                  _selectedCountry = null;
-                  _states = [];
-                  _selectedState = null;
-                  _citiesPage = null;
-                }),
-              ),
-              SizedBox(height: isTablet ? 12 : 10),
-              if (_loadingStates)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Color(0xFF4F5BD5),
-                      ),
-                      strokeWidth: 2,
-                    ),
-                  ),
-                )
-              else
-                ..._states.map(
-                  (s) => _StateRow(
-                    state: s,
-                    maxSales: _states.isNotEmpty ? _states.first.sales : 1,
-                    isTablet: isTablet,
-                    isSelected: _selectedState?.state == s.state,
-                    onTap: () => _loadCities(s),
-                  ),
-                ),
-            ],
-
-            // ── Cities drill-down ─────────────────────────────────────────
-            if (_selectedState != null) ...[
-              SizedBox(height: isTablet ? 20 : 16),
-              _SectionTitle(
-                'Cities — ${_selectedState!.state}',
-                isTablet: isTablet,
-                onBack: () => setState(() {
-                  _selectedState = null;
-                  _citiesPage = null;
-                }),
-              ),
-              SizedBox(height: isTablet ? 12 : 10),
-              if (_loadingCities)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Color(0xFF4F5BD5),
-                      ),
-                      strokeWidth: 2,
-                    ),
-                  ),
-                )
-              else if (_citiesPage != null) ...[
-                ..._citiesPage!.data.map(
-                  (c) => _CityRow(city: c, isTablet: isTablet),
-                ),
-                SizedBox(height: isTablet ? 12 : 10),
-                _PaginationBar(
-                  page: _citiesPage!.page,
-                  totalPages: _citiesPage!.totalPages,
-                  total: _citiesPage!.total,
-                  isTablet: isTablet,
-                  onPrev: _currentCityPage > 1
-                      ? () => _loadCities(
-                          _selectedState!,
-                          page: _currentCityPage - 1,
-                        )
-                      : null,
-                  onNext: _currentCityPage < _citiesPage!.totalPages
-                      ? () => _loadCities(
-                          _selectedState!,
-                          page: _currentCityPage + 1,
-                        )
-                      : null,
-                ),
-              ],
-            ],
 
             const SizedBox(height: 24),
           ],
@@ -670,8 +528,6 @@ class _SalesSummaryCard extends StatelessWidget {
             style: const TextStyle(fontSize: 12.5, color: Color(0xFF8A93B2)),
           ),
           SizedBox(height: isTablet ? 20 : 16),
-
-          // Pie bar
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: Row(
@@ -687,9 +543,7 @@ class _SalesSummaryCard extends StatelessWidget {
               ],
             ),
           ),
-
           SizedBox(height: isTablet ? 16 : 14),
-
           Row(
             children: [
               Expanded(
@@ -722,13 +576,8 @@ class _SalesSummaryCard extends StatelessWidget {
     );
   }
 
-  String _formatCount(int v) {
-    if (v >= 1000) {
-      return '${(v / 1000).toStringAsFixed(0)}K';
-    }
-    return v.toString();
-  }
-
+  String _formatCount(int v) =>
+      v >= 1000 ? '${(v / 1000).toStringAsFixed(0)}K' : v.toString();
   String _formatAmount(double v) {
     if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(2)}M';
     if (v >= 1000) return '${(v / 1000).toStringAsFixed(1)}K';
@@ -737,12 +586,8 @@ class _SalesSummaryCard extends StatelessWidget {
 }
 
 class _SalesStat extends StatelessWidget {
-  final String label;
-  final String count;
-  final String amount;
-  final String rate;
-  final Color color;
-  final Color bgColor;
+  final String label, count, amount, rate;
+  final Color color, bgColor;
   final bool isTablet;
 
   const _SalesStat({
@@ -835,7 +680,6 @@ class _HourlyGrowthCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final maxAmount = data.map((h) => h.amount).reduce((a, b) => a > b ? a : b);
-    // Show only every 3rd label to avoid clutter
     final visibleLabels = {0, 3, 6, 9, 12, 15, 18, 21, 23};
 
     return Container(
@@ -868,8 +712,6 @@ class _HourlyGrowthCard extends StatelessWidget {
             style: TextStyle(fontSize: 12.5, color: Color(0xFF8A93B2)),
           ),
           SizedBox(height: isTablet ? 20 : 16),
-
-          // Mini bar chart
           SizedBox(
             height: isTablet ? 100 : 80,
             child: Row(
@@ -900,10 +742,7 @@ class _HourlyGrowthCard extends StatelessWidget {
               }).toList(),
             ),
           ),
-
           const SizedBox(height: 6),
-
-          // Hour labels
           Row(
             children: data.map((h) {
               return Expanded(
@@ -921,10 +760,7 @@ class _HourlyGrowthCard extends StatelessWidget {
               );
             }).toList(),
           ),
-
           SizedBox(height: isTablet ? 14 : 12),
-
-          // Legend
           Row(
             children: [
               _LegendDot(color: const Color(0xFF4F5BD5), label: 'Growth'),
@@ -971,36 +807,18 @@ class _LegendDot extends StatelessWidget {
 class _SectionTitle extends StatelessWidget {
   final String title;
   final bool isTablet;
-  final VoidCallback? onBack;
 
-  const _SectionTitle(this.title, {required this.isTablet, this.onBack});
+  const _SectionTitle(this.title, {required this.isTablet});
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        if (onBack != null) ...[
-          GestureDetector(
-            onTap: onBack,
-            child: const Icon(
-              Icons.arrow_back_ios_rounded,
-              color: Color(0xFF4F5BD5),
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 6),
-        ],
-        Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: isTablet ? 18 : 15,
-              fontWeight: FontWeight.w800,
-              color: const Color(0xFF1A1F3C),
-            ),
-          ),
-        ),
-      ],
+    return Text(
+      title,
+      style: TextStyle(
+        fontSize: isTablet ? 18 : 15,
+        fontWeight: FontWeight.w800,
+        color: const Color(0xFF1A1F3C),
+      ),
     );
   }
 }
@@ -1011,14 +829,12 @@ class _CountryRow extends StatelessWidget {
   final CountrySales country;
   final double maxSales;
   final bool isTablet;
-  final bool isSelected;
   final VoidCallback onTap;
 
   const _CountryRow({
     required this.country,
     required this.maxSales,
     required this.isTablet,
-    required this.isSelected,
     required this.onTap,
   });
 
@@ -1034,11 +850,8 @@ class _CountryRow extends StatelessWidget {
           vertical: isTablet ? 14 : 12,
         ),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFEEF0FC) : Colors.white,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(isTablet ? 16 : 12),
-          border: isSelected
-              ? Border.all(color: const Color(0xFF4F5BD5), width: 1.5)
-              : null,
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.04),
@@ -1057,9 +870,7 @@ class _CountryRow extends StatelessWidget {
                   style: TextStyle(
                     fontSize: isTablet ? 15 : 14,
                     fontWeight: FontWeight.w700,
-                    color: isSelected
-                        ? const Color(0xFF4F5BD5)
-                        : const Color(0xFF1A1F3C),
+                    color: const Color(0xFF1A1F3C),
                   ),
                 ),
                 const Spacer(),
@@ -1072,11 +883,9 @@ class _CountryRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 6),
-                Icon(
-                  isSelected
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.chevron_right_rounded,
-                  color: const Color(0xFF8A93B2),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF8A93B2),
                   size: 18,
                 ),
               ],
@@ -1103,256 +912,6 @@ class _CountryRow extends StatelessWidget {
     if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
     if (v >= 1000) return '${(v / 1000).toStringAsFixed(0)}K';
     return v.toStringAsFixed(0);
-  }
-}
-
-// ── State Row ─────────────────────────────────────────────────────────────────
-
-class _StateRow extends StatelessWidget {
-  final StateSales state;
-  final double maxSales;
-  final bool isTablet;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _StateRow({
-    required this.state,
-    required this.maxSales,
-    required this.isTablet,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final pct = maxSales > 0 ? state.sales / maxSales : 0.0;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: EdgeInsets.symmetric(
-          horizontal: isTablet ? 18 : 14,
-          vertical: isTablet ? 14 : 12,
-        ),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFFFF7ED) : Colors.white,
-          borderRadius: BorderRadius.circular(isTablet ? 16 : 12),
-          border: isSelected
-              ? Border.all(color: const Color(0xFFD97706), width: 1.5)
-              : null,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  state.state,
-                  style: TextStyle(
-                    fontSize: isTablet ? 14 : 13.5,
-                    fontWeight: FontWeight.w700,
-                    color: isSelected
-                        ? const Color(0xFFD97706)
-                        : const Color(0xFF1A1F3C),
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '\$${_fmt(state.sales)}',
-                  style: TextStyle(
-                    fontSize: isTablet ? 14 : 13.5,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF1A1F3C),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(
-                  isSelected
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.chevron_right_rounded,
-                  color: const Color(0xFF8A93B2),
-                  size: 18,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: pct.toDouble(),
-                minHeight: 5,
-                backgroundColor: const Color(0xFFF0F2F8),
-                valueColor: const AlwaysStoppedAnimation<Color>(
-                  Color(0xFFD97706),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _fmt(double v) {
-    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
-    if (v >= 1000) return '${(v / 1000).toStringAsFixed(0)}K';
-    return v.toStringAsFixed(0);
-  }
-}
-
-// ── City Row ──────────────────────────────────────────────────────────────────
-
-class _CityRow extends StatelessWidget {
-  final CitySales city;
-  final bool isTablet;
-
-  const _CityRow({required this.city, required this.isTablet});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: EdgeInsets.symmetric(
-        horizontal: isTablet ? 16 : 14,
-        vertical: isTablet ? 12 : 10,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(isTablet ? 14 : 10),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.location_city_rounded,
-            color: Color(0xFF8A93B2),
-            size: 16,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              city.city,
-              style: TextStyle(
-                fontSize: isTablet ? 14.5 : 13.5,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF1A1F3C),
-              ),
-            ),
-          ),
-          Text(
-            '\$${_fmt(city.sales)}',
-            style: TextStyle(
-              fontSize: isTablet ? 14 : 13,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF4F5BD5),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _fmt(double v) {
-    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(2)}M';
-    if (v >= 1000) return '${(v / 1000).toStringAsFixed(1)}K';
-    return v.toStringAsFixed(2);
-  }
-}
-
-// ── Pagination Bar ────────────────────────────────────────────────────────────
-
-class _PaginationBar extends StatelessWidget {
-  final int page;
-  final int totalPages;
-  final int total;
-  final bool isTablet;
-  final VoidCallback? onPrev;
-  final VoidCallback? onNext;
-
-  const _PaginationBar({
-    required this.page,
-    required this.totalPages,
-    required this.total,
-    required this.isTablet,
-    this.onPrev,
-    this.onNext,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          _PageBtn(icon: Icons.chevron_left_rounded, onTap: onPrev),
-          Text(
-            'Page $page of $totalPages  •  $total cities',
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF8A93B2),
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          _PageBtn(icon: Icons.chevron_right_rounded, onTap: onNext),
-        ],
-      ),
-    );
-  }
-}
-
-class _PageBtn extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  const _PageBtn({required this.icon, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          color: onTap != null
-              ? const Color(0xFFEEF0FC)
-              : const Color(0xFFF0F2F8),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          icon,
-          color: onTap != null
-              ? const Color(0xFF4F5BD5)
-              : const Color(0xFFD1D5DB),
-          size: 20,
-        ),
-      ),
-    );
   }
 }
 
@@ -1390,7 +949,7 @@ class _UserBottomNav extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: List.generate(items.length, (i) {
-              final isSelected = i == 0; // Overview always selected for now
+              final isSelected = i == 0;
               return GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {},
