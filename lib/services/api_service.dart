@@ -32,10 +32,6 @@ class ApiService {
         )
         .timeout(const Duration(seconds: 15));
 
-    print("||||||||||||||||||||||||||||||||||||||||||||||");
-    print(response.body);
-    print("||||||||||||||||||||||||||||||||||||||||||||||");
-
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     if (body['success'] != true) {
       throw ApiException(

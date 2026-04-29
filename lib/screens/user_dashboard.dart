@@ -4,6 +4,7 @@ import '../models/dashboard_models.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import 'login_screen.dart';
+import 'dart:async';
 
 class UserDashboardScreen extends StatefulWidget {
   const UserDashboardScreen({super.key});
@@ -35,10 +36,18 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
   bool _loadingCities = false;
   int _currentCityPage = 1;
 
+  Timer? _hourlyGrowthTimer;
+
   @override
   void initState() {
     super.initState();
     _initAndLoad();
+  }
+
+  @override
+  void dispose() {
+    _hourlyGrowthTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _initAndLoad() async {
@@ -65,15 +74,14 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
         ApiService.getRevenue(_token),
         ApiService.getSalesSummary(_token),
         ApiService.getCountries(_token),
-        ApiService.getHourlyGrowth(_token),
       ]);
       setState(() {
         _revenue = results[0] as RevenueData;
         _salesSummary = results[1] as SalesSummary;
         _countries = results[2] as List<CountrySales>;
-        _hourlyGrowth = results[3] as List<HourlyGrowth>;
         _isLoading = false;
       });
+      _startHourlyGrowthPolling(); // start polling after dashboard loads
     } on ApiException catch (e) {
       setState(() {
         _loadError = e.message;
@@ -84,6 +92,29 @@ class _UserDashboardScreenState extends State<UserDashboardScreen> {
         _loadError = 'Failed to load dashboard. Check your connection.';
         _isLoading = false;
       });
+    }
+  }
+
+  void _startHourlyGrowthPolling() {
+    _hourlyGrowthTimer?.cancel(); // cancel any existing timer
+    _fetchHourlyGrowthAndScheduleNext();
+  }
+
+  Future<void> _fetchHourlyGrowthAndScheduleNext() async {
+    if (!mounted) return;
+    try {
+      final data = await ApiService.getHourlyGrowth(_token);
+      if (!mounted) return;
+      setState(() => _hourlyGrowth = data);
+      // Only schedule next call after SUCCESS — 3s starts here
+      _hourlyGrowthTimer = Timer(
+        const Duration(seconds: 3),
+        _fetchHourlyGrowthAndScheduleNext,
+      );
+    } catch (_) {
+      // On failure, do NOT schedule next call — polling stops silently
+      // Optionally retry after a longer delay if you want:
+      // _hourlyGrowthTimer = Timer(const Duration(seconds: 10), _fetchHourlyGrowthAndScheduleNext);
     }
   }
 
